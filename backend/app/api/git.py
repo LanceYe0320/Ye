@@ -1,11 +1,11 @@
-import re
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_verified_project, project_root
 from app.sandbox.runner import run_command
 from app.storage.models import Project
+
+import re
 
 router = APIRouter(prefix="/api/projects/{project_id}/git", tags=["git"])
 
@@ -143,13 +143,22 @@ async def git_commit_ai(
     if not diff_output.strip():
         return {"ok": False, "error": "No changes to commit"}
 
-    from app.llm.zhipu_provider import ZhipuProvider
     from app.llm.base_provider import ChatMessage
+    from app.llm.zhipu_provider import ZhipuProvider
 
     provider = ZhipuProvider()
+    system_prompt = (
+        "You are a git commit message generator. "
+        "Generate a concise, conventional commit message based on the diff. "
+        "Use conventional commits format (feat/fix/refactor/docs/chore). "
+        "Reply with ONLY the commit message, no explanation."
+    )
     messages = [
-        ChatMessage(role="system", content="You are a git commit message generator. Generate a concise, conventional commit message based on the diff. Use conventional commits format (feat/fix/refactor/docs/chore). Reply with ONLY the commit message, no explanation."),
-        ChatMessage(role="user", content=f"Generate a commit message for this diff:\n\n{diff_output[:4000]}"),
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(
+            role="user",
+            content=f"Generate a commit message for this diff:\n\n{diff_output[:4000]}",
+        ),
     ]
 
     commit_msg = ""
@@ -209,13 +218,20 @@ async def git_review(
     if not diff_output.strip():
         return {"review": "No changes to review."}
 
-    from app.llm.zhipu_provider import ZhipuProvider
     from app.llm.base_provider import ChatMessage
+    from app.llm.zhipu_provider import ZhipuProvider
 
     provider = ZhipuProvider()
+    system_prompt = (
+        "You are a code reviewer. Analyze the diff and provide concise feedback. "
+        "Focus on: bugs, security issues, performance, readability. Use bullet points."
+    )
     messages = [
-        ChatMessage(role="system", content="You are a code reviewer. Analyze the diff and provide concise feedback. Focus on: bugs, security issues, performance, readability. Use bullet points."),
-        ChatMessage(role="user", content=f"Review this diff:\n\n{diff_output[:6000]}"),
+        ChatMessage(role="system", content=system_prompt),
+        ChatMessage(
+            role="user",
+            content=f"Review this diff:\n\n{diff_output[:6000]}",
+        ),
     ]
 
     review = ""

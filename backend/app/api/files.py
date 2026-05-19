@@ -1,14 +1,11 @@
-import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_verified_project, project_root
-from app.storage.database import get_db
+from app.sandbox.runner import run_command
 from app.storage.models import Project
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/api/projects/{project_id}/files", tags=["files"])
 
