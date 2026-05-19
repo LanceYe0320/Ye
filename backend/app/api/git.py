@@ -1,11 +1,11 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_verified_project, project_root
 from app.sandbox.runner import run_command
 from app.storage.models import Project
-
-import re
 
 router = APIRouter(prefix="/api/projects/{project_id}/git", tags=["git"])
 

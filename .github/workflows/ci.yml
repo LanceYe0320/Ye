@@ -62,10 +62,11 @@ jobs:
         with:
           node-version: "22"
 
-      - name: 安装前端依赖（跳过原生模块）
+      - name: 安装前端依赖
         run: |
           cd desktop
-          npm install --ignore-scripts --no-optional
+          rm -f package-lock.json
+          npm install --no-optional
 
       - name: Vite 构建
         run: |

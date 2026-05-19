@@ -3,13 +3,10 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
-from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.text import Text
 
 from app.config import settings
 from app.llm.base_provider import ChatMessage, ToolCall
-from app.llm.tool_executor import ToolExecutor
 from app.llm.tools import build_tool_executor
 from app.llm.zhipu_provider import ZhipuProvider
 
@@ -64,7 +61,7 @@ async def _run():
         try:
             if session:
                 user_input = await asyncio.to_thread(
-                    session.prompt, f"\001\033[1;36m\002ye>\001\033[0m\002 "
+                    session.prompt, "\001\033[1;36m\002ye>\001\033[0m\002 "
                 )
             else:
                 user_input = input("\033[1;36mye>\033[0m ")
@@ -114,7 +111,7 @@ async def _run():
                     result_text = chunk.text[:300]
                     if len(chunk.text) > 300:
                         result_text += "..."
-                    console.print(f"[dim green]done[/]")
+                    console.print("[dim green]done[/]")
                     console.print(Panel(result_text, border_style="dim", padding=(0, 1)))
 
                 elif chunk.type == "error":
