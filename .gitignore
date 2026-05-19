@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build
+*.apk
+build/
+
+# Data (local)
+data/*.db
+data/*.sqlite
+
+# Mobile
+mobile/.dart_tool/
+mobile/.packages
+mobile/.pub-cache/
+mobile/build/
