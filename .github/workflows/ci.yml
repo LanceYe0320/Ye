@@ -65,7 +65,7 @@ jobs:
       - name: 安装前端依赖（跳过原生模块）
         run: |
           cd desktop
-          npm ci --ignore-scripts
+          npm install --ignore-scripts --no-optional
 
       - name: Vite 构建
         run: |

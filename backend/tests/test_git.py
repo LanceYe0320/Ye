@@ -1,13 +1,22 @@
 import subprocess
 
-import pytest
 from httpx import AsyncClient
 
 
 def _init_git_repo(path):
     subprocess.run(["git", "init"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(path), check=True, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=str(path), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=str(path),
+        check=True,
+        capture_output=True,
+    )
     (path / "README.md").write_text("# test")
     subprocess.run(["git", "add", "."], cwd=str(path), check=True, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(path), check=True, capture_output=True)
