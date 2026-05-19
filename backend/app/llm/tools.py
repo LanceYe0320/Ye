@@ -1,10 +1,9 @@
-import json
 from pathlib import Path
 
+from app.indexer.vector_store import search_code
 from app.llm.tool_executor import ToolExecutor
 from app.llm.zhipu_provider import ZhipuProvider
 from app.sandbox.runner import run_command
-from app.indexer.vector_store import search_code
 
 
 async def _read_file_handler(path: str) -> str:

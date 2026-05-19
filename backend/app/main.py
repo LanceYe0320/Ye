@@ -28,14 +28,14 @@ async def startup():
 
 
 from app.api.auth import router as auth_router
-from app.api.projects import router as projects_router
-from app.api.files import router as files_router
-from app.api.terminal import router as terminal_router
 from app.api.conversations import router as conversations_router
-from app.api.settings import router as settings_router
-from app.api.search import router as search_router
-from app.api.plugins import router as plugins_router
+from app.api.files import router as files_router
 from app.api.git import router as git_router
+from app.api.plugins import router as plugins_router
+from app.api.projects import router as projects_router
+from app.api.search import router as search_router
+from app.api.settings import router as settings_router
+from app.api.terminal import router as terminal_router
 from app.ws.gateway import router as ws_router
 from app.ws.sync_handler import sync_manager
 

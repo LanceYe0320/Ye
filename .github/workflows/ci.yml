@@ -66,7 +66,7 @@ jobs:
         run: |
           cd desktop
           rm -f package-lock.json
-          npm install --no-optional
+          npm install
 
       - name: Vite 构建
         run: |

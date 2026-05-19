@@ -1,15 +1,13 @@
-import asyncio
 import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.llm.base_provider import ChatMessage, StreamingChunk, ToolCall
-from app.llm.tool_executor import ToolExecutor
 from app.llm.tools import build_tool_executor
 from app.llm.zhipu_provider import ZhipuProvider
-from app.storage.models import Conversation, Message, MessageRole
 from app.storage.database import async_session
+from app.storage.models import Message, MessageRole
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +80,6 @@ async def websocket_chat(websocket: WebSocket, conversation_id: int):
             # Run agentic loop and stream to client
             assistant_content = ""
             tool_calls_data = []
-            usage_data = {}
 
             async for chunk in executor.run_agentic_loop(messages=messages, model=model):
                 await websocket.send_text(json.dumps(_chunk_to_dict(chunk)))

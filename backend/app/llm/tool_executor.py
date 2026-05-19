@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Any, AsyncIterator, Callable, Awaitable
+from typing import Any, AsyncIterator, Awaitable, Callable
 
 from app.llm.base_provider import (
     BaseLLMProvider,
@@ -68,7 +68,6 @@ class ToolExecutor:
         for iteration in range(max_iterations):
             pending_tool_calls: list[ToolCall] = []
             assistant_content = ""
-            collected_usage = {}
 
             async for chunk in self.provider.chat(
                 messages=current_messages,
@@ -93,7 +92,7 @@ class ToolExecutor:
                     yield chunk
 
                 elif chunk.type == "usage":
-                    collected_usage = chunk.usage
+                    pass  # usage tracked via chunks
 
                 elif chunk.type == "done":
                     if not pending_tool_calls:

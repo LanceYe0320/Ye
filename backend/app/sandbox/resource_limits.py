@@ -1,10 +1,6 @@
 import asyncio
 import resource
 import sys
-from typing import Callable
-
-from app.config import settings
-
 
 MAX_MEMORY_MB = 512
 MAX_OPEN_FILES = 256
