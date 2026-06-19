@@ -1,34 +1,151 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-*.egg-info/
-.pytest_cache/
+# ============================================================
+# Ye Project — Root .gitignore
+# ============================================================
 
-# Node
+# ---- Secrets / Credentials (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+ credentials.json
+service-account*.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.venv2/
+*.egg-info/
+ai_coding_assistant.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+
+# ---- Node ----
 node_modules/
 dist/
-.env
+.next/
+.nuxt/
+.parcel-cache/
 
-# IDE
+# ---- IDE ----
 .vscode/
 .idea/
+*.swp
+*.swo
+*.swn
+*.bak
+.project
+.classpath
+.settings/
 
-# OS
+# ---- OS ----
 .DS_Store
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
-# Build
+# ---- Build / Binary ----
 *.apk
+*.ipa
+*.exe
+*.dll
+*.so
+*.dylib
 build/
+out/
+target/
 
-# Data (local)
+# ---- Data (local) ----
 data/*.db
 data/*.sqlite
+data/*.sqlite3
+data/projects/
+backend/data/
 
-# Mobile
+# ---- Mobile ----
 mobile/.dart_tool/
 mobile/.packages
 mobile/.pub-cache/
+mobile/.flutter-plugins-dependencies
 mobile/build/
+mobile/.idea/
+mobile_old/
+
+# ---- Desktop ----
+desktop/node_modules/
+desktop/dist/
+desktop/.vite/
+
+# ---- Logs / Temp ----
+*.log
+logs/
+*.tmp
+*.temp
+tmp/
+.cache/
+
+# ---- Reports (regenerated) ----
+YE_REPORT.html
+YE_IMPROVE_REPORT.html
+YE_IMPROVEMENT_REPORT.html
+YE_PROGRESS*.html
+YE_PROJECT_GUIDE.md
+flutter_*.log
+test_write.txt
+
+# ---- Local runtime artifacts ----
+*.local
+*.bak
+*.orig
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Misc secrets that might be mis-placed ----
+**/secrets/**
+**/.secrets/**
+credentials*.json
+*credentials*.yaml
+*credentials*.yml
+
+# ---- Insurance: never let .env slip in (matches at any depth) ----
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+!**/.env.example
+
+# ---- Local editor / tool configs ----
+.claude/
+**/.claude/
+
+# ---- Generated artifacts (reports, indices, caches) ----
+YE_REPORT_part1.py
+YE_SUMMARY_REPORT.html
+YE_*.html
+YE_*.py
+**/reports/*.html
+data/chroma/
+**/data/chroma/
+
+# ---- Session / memory runtime data ----
+.ye/sessions/
+.ye/index_mtimes.json
+backend/.ye/skills/refactor/
+
