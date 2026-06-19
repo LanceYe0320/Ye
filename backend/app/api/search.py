@@ -1,3 +1,8 @@
+from __future__ import annotations
+
+import asyncio
+from typing import List, Optional
+
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 
@@ -17,7 +22,7 @@ class SearchResult(BaseModel):
     id: str
     content: str
     metadata: dict
-    distance: float | None = None
+    distance: Optional[float] = None
 
 
 class IndexResponse(BaseModel):
@@ -31,18 +36,21 @@ async def trigger_index(
     project: Project = Depends(get_verified_project),
 ):
     project_path = project.path
-    import asyncio
-    loop = asyncio.get_event_loop()
-    count = await loop.run_in_executor(None, index_project, project_path)
+    # index_project does CPU-bound parsing + embedding; run off the event loop.
+    count = await asyncio.to_thread(index_project, project_path)
     return {"indexed_chunks": count, "status": "completed"}
 
 
-@router.post("/search", response_model=list[SearchResult])
+@router.post("/search", response_model=List[SearchResult])
 async def semantic_search(
     project_id: int,
     query: SearchQuery,
     project: Project = Depends(get_verified_project),
 ):
     project_path = project.path
-    results = search_code(query.query, project_path=project_path, n_results=query.n_results)
+    # search_code runs the embedding model + ChromaDB query synchronously and is
+    # CPU/IO-bound — offload it so it doesn't block the FastAPI event loop.
+    results = await asyncio.to_thread(
+        search_code, query.query, project_path=project_path, n_results=query.n_results
+    )
     return [SearchResult(**r) for r in results]
