@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -54,6 +56,22 @@ class ModelInfo:
     max_tokens: int
     supports_tools: bool = True
     supports_vision: bool = False
+
+
+class ToolAbortError(Exception):
+    """Raised when a tool failure triggers ABORT strategy — propagates to the agentic loop."""
+    def __init__(self, tool_name: str, error_message: str):
+        self.tool_name = tool_name
+        self.error_message = error_message
+        super().__init__(f"Tool '{tool_name}' aborted: {error_message}")
+
+
+class ToolEscalationError(Exception):
+    """Raised when a tool failure triggers ESCALATE strategy — needs human intervention."""
+    def __init__(self, tool_name: str, error_message: str):
+        self.tool_name = tool_name
+        self.error_message = error_message
+        super().__init__(f"Tool '{tool_name}' requires human intervention: {error_message}")
 
 
 class BaseLLMProvider(ABC):

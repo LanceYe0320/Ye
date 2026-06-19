@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib.util
 import json
 import logging
@@ -82,6 +84,9 @@ class PluginManager:
         if plugin_name not in self._plugins:
             return False
         plugin = self._plugins[plugin_name]
+        # Remove tools registered by this plugin
+        for tool in plugin.get_tools():
+            self._tools.pop(tool.name, None)
         await plugin.on_deactivate()
         del self._plugins[plugin_name]
         del self._contexts[plugin_name]

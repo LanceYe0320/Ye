@@ -1,27 +1,47 @@
-# Byte-compiled / optimized / DLL files
+# Backend-specific gitignore (in addition to root .gitignore)
+
+# ---- Python ----
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+*.egg-info/
+ai_coding_assistant.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+.tox/
+.hypothesis/
 
-# Virtual environment
+# ---- Virtual envs ----
 .venv/
+.venv2/
 venv/
 env/
 
-# IDE
+# ---- Local data / runtime ----
+data/
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+test_write.txt
+*.log
+
+# ---- IDE ----
 .idea/
 .vscode/
 *.swp
 *.swo
+*.swn
+*.bak
 
-# Environment
+# ---- Env (defense in depth — root .gitignore also covers this) ----
 .env
-
-# Database
-data/
-*.db
-
-# Distribution
-dist/
-build/
-*.egg-info/
+.env.*
+!.env.example

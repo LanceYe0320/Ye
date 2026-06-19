@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import re
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.api.deps import get_verified_project, project_root
-from app.sandbox.runner import run_command
 from app.storage.models import Project
 
 router = APIRouter(prefix="/api/projects/{project_id}/git", tags=["git"])
@@ -12,18 +14,18 @@ router = APIRouter(prefix="/api/projects/{project_id}/git", tags=["git"])
 
 class GitStatus(BaseModel):
     branch: str
-    staged: list[str]
-    unstaged: list[str]
-    untracked: list[str]
+    staged: List[str]
+    unstaged: List[str]
+    untracked: List[str]
 
 
 class GitCommit(BaseModel):
     message: str
-    files: list[str] | None = None
+    files: Optional[List[str]] = None
 
 
 class GitDiff(BaseModel):
-    files: list[str] | None = None
+    files: Optional[List[str]] = None
     staged: bool = False
 
 
@@ -33,15 +35,28 @@ class GitCheckout(BaseModel):
 
 
 async def _git(project_path: str, *args: str) -> str:
+    """Run a git command safely using subprocess_exec (no shell)."""
+    import asyncio
+
     for arg in args:
         if re.search(r'[;&|`$]', arg):
             raise HTTPException(400, f"Invalid git argument: {arg}")
-    cmd = "git " + " ".join(args)
-    result = await run_command(cmd, cwd=project_path)
-    output = result.stdout
-    if result.exit_code != 0:
-        raise HTTPException(400, f"Git error: {result.stderr or output}")
-    return output
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=project_path,
+        )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=30)
+        output = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
+        if proc.returncode != 0:
+            raise HTTPException(400, f"Git error: {stderr or output}")
+        return output
+    except asyncio.TimeoutError:
+        raise HTTPException(408, "Git command timed out")
 
 
 @router.get("/status")
@@ -95,7 +110,7 @@ async def git_log(
 async def git_diff(
     project_id: int,
     staged: bool = False,
-    file: str | None = None,
+    file: Optional[str] = None,
     project: Project = Depends(get_verified_project),
 ):
     root = project_root(project)

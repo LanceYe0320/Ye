@@ -145,6 +145,8 @@ data/chroma/
 **/data/chroma/
 
 # ---- Session / memory runtime data ----
+.ye/
+backend/.ye/
 .ye/sessions/
 .ye/index_mtimes.json
 backend/.ye/skills/refactor/

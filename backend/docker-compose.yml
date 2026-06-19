@@ -1,0 +1,45 @@
+# YE AI Coding Assistant — Docker Compose
+#
+# Usage:
+#   Interactive CLI:   docker compose run --rm ye
+#   Single prompt:     docker compose run --rm ye ye -p "explain this code"
+#   API server:        docker compose up api
+#   API + CLI:         docker compose up
+
+services:
+  # ── Interactive CLI ──────────────────────────────────────────────────────
+  ye:
+    build: .
+    environment:
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:?Set ZHIPU_API_KEY in .env or pass -e ZHIPU_API_KEY=xxx}
+      - ZHIPU_MODEL=${ZHIPU_MODEL:-glm-5.1}
+    volumes:
+      - ye-data:/app/data
+      # Mount your project directory for ye to work on
+      - ${PROJECT_DIR:-.}:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  # ── API Server (FastAPI + WebSocket) ─────────────────────────────────────
+  api:
+    build: .
+    command: ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]
+    environment:
+      - ZHIPU_API_KEY=${ZHIPU_API_KEY:?Set ZHIPU_API_KEY}
+      - ZHIPU_MODEL=${ZHIPU_MODEL:-glm-5.1}
+      - HOST=0.0.0.0
+      - PORT=8765
+      - DATA_DIR=/app/data
+    volumes:
+      - ye-data:/app/data
+    ports:
+      - "${PORT:-8765}:8765"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  ye-data:

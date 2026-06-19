@@ -1,6 +1,14 @@
+from __future__ import annotations
+import logging
+
 import asyncio
-import resource
 import sys
+
+
+
+logger = logging.getLogger(__name__)
+if sys.platform != "win32":
+    import resource
 
 MAX_MEMORY_MB = 512
 MAX_OPEN_FILES = 256
