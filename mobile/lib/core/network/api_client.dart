@@ -39,6 +39,28 @@ class ApiClient {
 
   ApiClient(this._dio);
 
+  // Auth
+  Future<Map<String, dynamic>> login(String username, String password) async {
+    final res = await _dio.post('/api/auth/login', data: {
+      'username': username,
+      'password': password,
+    });
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> register(String username, String password) async {
+    final res = await _dio.post('/api/auth/register', data: {
+      'username': username,
+      'password': password,
+    });
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> getMe() async {
+    final res = await _dio.get('/api/auth/me');
+    return res.data;
+  }
+
   // Conversations
   Future<List<dynamic>> getConversations() async {
     final res = await _dio.get('/api/conversations/');
@@ -65,6 +87,13 @@ class ApiClient {
 
   Future<void> deleteConversation(int id) async {
     await _dio.delete('/api/conversations/$id');
+  }
+
+  Future<Map<String, dynamic>> updateConversation(int id, {String? title}) async {
+    final data = <String, dynamic>{};
+    if (title != null) data['title'] = title;
+    final res = await _dio.put('/api/conversations/$id', data: data);
+    return res.data;
   }
 
   // Projects
@@ -106,12 +135,86 @@ class ApiClient {
     return res.data;
   }
 
+  // Files - delete
+  Future<void> deleteFile(int projectId, String filePath) async {
+    final encoded = Uri.encodeComponent(filePath);
+    await _dio.delete('/api/projects/$projectId/files/$encoded');
+  }
+
+  // Projects - delete
+  Future<void> deleteProject(int projectId) async {
+    await _dio.delete('/api/projects/$projectId');
+  }
+
+  // Git
+  Future<Map<String, dynamic>> gitStatus(int projectId) async {
+    final res = await _dio.get('/api/projects/$projectId/git/status');
+    return res.data;
+  }
+
+  Future<List<dynamic>> gitLog(int projectId, {int count = 20}) async {
+    final res = await _dio.get('/api/projects/$projectId/git/log', queryParameters: {'count': count});
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> gitDiff(int projectId, {bool staged = false, String? file}) async {
+    final queryParams = <String, dynamic>{'staged': staged};
+    if (file != null) queryParams['file'] = file;
+    final res = await _dio.get('/api/projects/$projectId/git/diff', queryParameters: queryParams);
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> gitCommit(int projectId, String message, {List<String>? files}) async {
+    final data = <String, dynamic>{'message': message};
+    if (files != null) data['files'] = files;
+    final res = await _dio.post('/api/projects/$projectId/git/commit', data: data);
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> gitCommitAi(int projectId) async {
+    final res = await _dio.post('/api/projects/$projectId/git/commit-ai');
+    return res.data;
+  }
+
+  Future<List<dynamic>> gitBranches(int projectId) async {
+    final res = await _dio.get('/api/projects/$projectId/git/branches');
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> gitCheckout(int projectId, String branch, {bool create = false}) async {
+    final res = await _dio.post('/api/projects/$projectId/git/checkout', data: {
+      'branch': branch,
+      'create': create,
+    });
+    return res.data;
+  }
+
+  Future<Map<String, dynamic>> gitReview(int projectId) async {
+    final res = await _dio.post('/api/projects/$projectId/git/review');
+    return res.data;
+  }
+
+  // Search
+  Future<List<dynamic>> searchCode(int projectId, String query, {int nResults = 10}) async {
+    final res = await _dio.post('/api/projects/$projectId/search', data: {
+      'query': query,
+      'n_results': nResults,
+    });
+    return res.data;
+  }
+
   // Terminal
   Future<Map<String, dynamic>> executeCommand(int projectId, String command, {int? timeout}) async {
     final res = await _dio.post('/api/projects/$projectId/terminal/execute', data: {
       'command': command,
       'timeout': timeout,
     });
+    return res.data;
+  }
+
+  // Health
+  Future<Map<String, dynamic>> healthCheck() async {
+    final res = await _dio.get('/health');
     return res.data;
   }
 

@@ -29,6 +29,8 @@ final wsBaseUrlProvider = FutureProvider<String>((ref) async {
   final url = await ref.watch(serverUrlProvider.future);
   if (url.startsWith('https://')) {
     return 'wss://${url.substring(8)}';
+  } else if (url.startsWith('http://')) {
+    return 'ws://${url.substring(7)}';
   }
-  return 'ws://${url.substring(7)}';
+  return 'ws://$url';
 });

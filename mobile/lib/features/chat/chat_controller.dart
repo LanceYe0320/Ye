@@ -63,7 +63,7 @@ class ConversationInfo {
   factory ConversationInfo.fromJson(Map<String, dynamic> json) => ConversationInfo(
         id: json['id'] as int,
         title: json['title'] as String? ?? '',
-        model: json['model'] as String? ?? 'glm-4-plus',
+        model: json['model'] as String? ?? 'glm-5.1',
         projectId: json['project_id'] as int?,
       );
 }
@@ -108,8 +108,13 @@ class ChatNotifier extends StateNotifier<ChatState> {
   final WsClient _ws;
   final SyncManager _sync;
   StreamSubscription? _syncSubscription;
+  String _model = 'glm-5.1';
 
   ChatNotifier(this._api, this._ws, this._sync) : super(const ChatState());
+
+  void setModel(String model) {
+    _model = model;
+  }
 
   String _syncDocId(int convId) => 'chat:$convId';
 
@@ -175,7 +180,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
     final convId = state.currentConversation!.id;
 
     final userMsg = ChatMessage(
-      id: DateTime.now().millisecondsSinceEpoch,
+      id: DateTime.now().microsecondsSinceEpoch,
       role: 'user',
       content: content,
       createdAt: DateTime.now(),
@@ -187,8 +192,9 @@ class ChatNotifier extends StateNotifier<ChatState> {
       'last_message_at': DateTime.now().toIso8601String(),
     });
 
+    _ws.disconnect(); // Close any previous connection
     final stream = _ws.connect('/ws/chat/$convId');
-    _ws.send('/ws/chat/$convId', {'content': content, 'model': 'glm-4-plus'});
+    _ws.send('/ws/chat/$convId', {'content': content, 'model': _model});
 
     String assistantContent = '';
 
@@ -201,7 +207,7 @@ class ChatNotifier extends StateNotifier<ChatState> {
           state = state.copyWith(streamingContent: assistantContent);
         } else if (type == 'done') {
           final assistantMsg = ChatMessage(
-            id: DateTime.now().millisecondsSinceEpoch,
+            id: DateTime.now().microsecondsSinceEpoch + 1, // +1 to avoid collision with user msg
             role: 'assistant',
             content: assistantContent,
             createdAt: DateTime.now(),

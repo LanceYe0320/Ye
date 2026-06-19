@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/network/api_client.dart';
+import '../../core/storage/project_state.dart';
 import 'terminal_controller.dart';
 import 'terminal_input_widget.dart';
 import 'terminal_output_widget.dart';
@@ -34,10 +35,17 @@ class _TerminalViewScreenState extends ConsumerState<TerminalViewScreen> {
 
   Future<void> _initTerminal() async {
     try {
+      final storedId = ref.read(currentProjectIdProvider);
+      if (storedId != null && mounted) {
+        setState(() => _projectId = storedId);
+        await ref.read(terminalProvider.notifier).connect(storedId);
+        return;
+      }
       final api = ref.read(apiClientProvider);
       final projects = await api.getProjects();
       if (projects.isNotEmpty && mounted) {
         final id = projects.first['id'] as int;
+        await ref.read(currentProjectIdProvider.notifier).setProject(id);
         setState(() => _projectId = id);
         await ref.read(terminalProvider.notifier).connect(id);
       }

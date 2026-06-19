@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import '../../core/network/api_client.dart';
 import 'chat_controller.dart';
 import 'tool_call_widget.dart';
+
+const _catppuccinSurface = Color(0xFF181825);
 
 class ChatScreen extends ConsumerStatefulWidget {
   const ChatScreen({super.key});
@@ -20,7 +23,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(chatProvider.notifier).loadConversations();
+      _loadModel();
     });
+  }
+
+  Future<void> _loadModel() async {
+    try {
+      final api = ref.read(apiClientProvider);
+      final settings = await api.getSettings();
+      final model = settings['model'] as String? ?? 'glm-5.1';
+      ref.read(chatProvider.notifier).setModel(model);
+    } catch (_) {}
   }
 
   @override
@@ -35,6 +48,65 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (text.isEmpty) return;
     _controller.clear();
     ref.read(chatProvider.notifier).sendMessage(text);
+  }
+
+  Future<void> _deleteConversation(int id, String title) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Conversation'),
+        content: Text('Delete "$title"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF38BA8)),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      try {
+        final api = ref.read(apiClientProvider);
+        await api.deleteConversation(id);
+        ref.read(chatProvider.notifier).loadConversations();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+        }
+      }
+    }
+  }
+
+  Future<void> _renameConversation(ConversationInfo conv) async {
+    final controller = TextEditingController(text: conv.title);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename Conversation'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Title'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text.trim()), child: const Text('Rename')),
+        ],
+      ),
+    );
+    if (result != null && result.isNotEmpty) {
+      try {
+        final api = ref.read(apiClientProvider);
+        await api.updateConversation(conv.id, title: result);
+        ref.read(chatProvider.notifier).loadConversations();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Rename failed: $e')));
+        }
+      }
+    }
   }
 
   @override
@@ -66,10 +138,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   final isActive = state.currentConversation?.id == conv.id;
                   return Padding(
                     padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: Text(conv.title, style: const TextStyle(fontSize: 12)),
-                      selected: isActive,
-                      onSelected: (_) => ref.read(chatProvider.notifier).selectConversation(conv),
+                    child: GestureDetector(
+                      onLongPress: () => _deleteConversation(conv.id, conv.title),
+                      onDoubleTap: () => _renameConversation(conv),
+                      child: ChoiceChip(
+                        label: Text(conv.title, style: const TextStyle(fontSize: 12)),
+                        selected: isActive,
+                        onSelected: (_) => ref.read(chatProvider.notifier).selectConversation(conv),
+                      ),
                     ),
                   );
                 },

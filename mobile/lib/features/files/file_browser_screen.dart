@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/network/api_client.dart';
 import '../../core/crdt/sync_manager.dart';
+import '../../core/storage/project_state.dart';
 
 class FileBrowserScreen extends ConsumerStatefulWidget {
   const FileBrowserScreen({super.key});
@@ -71,11 +72,18 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
   Future<void> _loadProjects() async {
     setState(() => _loading = true);
     try {
-      final api = ref.read(apiClientProvider);
-      final projects = await api.getProjects();
-      if (projects.isNotEmpty) {
-        _projectId = projects.first['id'] as int;
+      final storedId = ref.read(currentProjectIdProvider);
+      if (storedId != null) {
+        _projectId = storedId;
         await _loadFiles('');
+      } else {
+        final api = ref.read(apiClientProvider);
+        final projects = await api.getProjects();
+        if (projects.isNotEmpty) {
+          _projectId = projects.first['id'] as int;
+          await ref.read(currentProjectIdProvider.notifier).setProject(_projectId);
+          await _loadFiles('');
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -265,6 +273,7 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
               _openFile(path);
             }
           },
+          onLongPress: () => _showFileOptions(name, entry['path'] as String? ?? '', isDir),
         );
       },
     );
@@ -325,6 +334,71 @@ class _FileBrowserScreenState extends ConsumerState<FileBrowserScreen> {
         return Icons.description;
       default:
         return Icons.insert_drive_file;
+    }
+  }
+
+  void _showFileOptions(String name, String path, bool isDir) {
+    showModalBottomSheet(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+            ),
+            const Divider(height: 1),
+            if (!isDir) ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('Edit'),
+              onTap: () { Navigator.pop(context); _openFile(path); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Color(0xFFF38BA8)),
+              title: const Text('Delete', style: TextStyle(color: Color(0xFFF38BA8))),
+              onTap: () {
+                Navigator.pop(context);
+                _confirmDelete(name, path);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmDelete(String name, String path) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete'),
+        content: Text('Delete "$name"? This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(backgroundColor: const Color(0xFFF38BA8)),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && _projectId != null) {
+      try {
+        final api = ref.read(apiClientProvider);
+        await api.deleteFile(_projectId!, path);
+        await _loadFiles(_currentPath);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Deleted'), duration: Duration(seconds: 1)),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+        }
+      }
     }
   }
 

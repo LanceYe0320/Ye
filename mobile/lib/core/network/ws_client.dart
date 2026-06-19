@@ -30,10 +30,14 @@ class WsClient {
     _channel = WebSocketChannel.connect(uri);
     _connected = true;
 
-    _channel!.stream.listen(
+    _channel?.stream.listen(
       (data) {
-        final parsed = jsonDecode(data as String) as Map<String, dynamic>;
-        controller.add(parsed);
+        try {
+          final parsed = jsonDecode(data as String) as Map<String, dynamic>;
+          controller.add(parsed);
+        } catch (_) {
+          // Ignore malformed JSON
+        }
       },
       onError: (error) {
         controller.addError(error);
@@ -65,6 +69,6 @@ class WsClient {
 
 final wsClientProvider = Provider<WsClient>((ref) {
   final wsBaseAsync = ref.watch(wsBaseUrlProvider);
-  final wsBase = wsBaseAsync.valueOrNull ?? 'ws://10.0.2.2:8765';
+  final wsBase = wsBaseAsync.valueOrNull ?? 'ws://localhost:8765';
   return WsClient(wsBase);
 });

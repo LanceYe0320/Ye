@@ -69,13 +69,13 @@ class TerminalController extends StateNotifier<TerminalState> {
 
     try {
       final wsBaseAsync = _ref.read(wsBaseUrlProvider);
-      final wsBase = wsBaseAsync.valueOrNull ?? 'ws://10.0.2.2:8765';
+      final wsBase = wsBaseAsync.valueOrNull ?? 'ws://localhost:8765';
       final uri = Uri.parse('$wsBase/ws/terminal/$projectId');
       _channel = WebSocketChannel.connect(uri);
 
       state = state.copyWith(isConnected: true, error: null);
 
-      _subscription = _channel!.stream.listen(
+      _subscription = _channel?.stream.listen(
         (data) {
           final event = jsonDecode(data as String) as Map<String, dynamic>;
           _handleEvent(event);
@@ -114,6 +114,8 @@ class TerminalController extends StateNotifier<TerminalState> {
     }
   }
 
+  static const _maxLines = 1000;
+
   void _appendOutput(String text, {bool isStderr = false}) {
     _pendingBuffer = (_pendingBuffer ?? '') + text;
 
@@ -135,6 +137,11 @@ class TerminalController extends StateNotifier<TerminalState> {
       _pendingBuffer = lines.last;
     }
 
+    // Trim old lines to prevent memory growth
+    if (currentLines.length > _maxLines) {
+      currentLines.removeRange(0, currentLines.length - _maxLines);
+    }
+
     state = state.copyWith(lines: currentLines);
   }
 
@@ -149,13 +156,13 @@ class TerminalController extends StateNotifier<TerminalState> {
     state = state.copyWith(lines: commandLines, isRunning: true);
     _pendingBuffer = '';
 
-    _channel!.sink.add(jsonEncode({'command': command}));
+    _channel?.sink.add(jsonEncode({'command': command}));
     _addToHistory(command);
   }
 
   void sendInterrupt() {
     if (_channel == null) return;
-    _channel!.sink.add(jsonEncode({'type': 'interrupt'}));
+    _channel?.sink.add(jsonEncode({'type': 'interrupt'}));
   }
 
   String? navigateHistory(int direction) {
