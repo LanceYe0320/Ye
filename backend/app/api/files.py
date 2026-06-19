@@ -1,5 +1,10 @@
+from __future__ import annotations
+
+import asyncio
+import shutil
 from pathlib import Path
 
+import aiofiles
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
@@ -12,7 +17,9 @@ router = APIRouter(prefix="/api/projects/{project_id}/files", tags=["files"])
 def safe_path(root: Path, rel_path: str) -> Path:
     """Ensure rel_path stays within root directory."""
     target = (root / rel_path).resolve()
-    if not str(target).startswith(str(root)):
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
         raise HTTPException(403, "Path traversal detected")
     return target
 
@@ -48,18 +55,22 @@ async def list_files(
     if not target.is_dir():
         raise HTTPException(400, "Not a directory")
 
-    entries = []
-    for item in sorted(target.iterdir()):
-        rel = str(item.relative_to(root)).replace("\\", "/")
-        entries.append(
-            DirEntry(
-                name=item.name,
-                path=rel,
-                is_dir=item.is_dir(),
-                size=item.stat().st_size if item.is_file() else 0,
+    # Async directory listing: gather stat() in parallel via to_thread
+    def _scan() -> list[DirEntry]:
+        out = []
+        for item in sorted(target.iterdir()):
+            rel = str(item.relative_to(root)).replace("\\", "/")
+            out.append(
+                DirEntry(
+                    name=item.name,
+                    path=rel,
+                    is_dir=item.is_dir(),
+                    size=item.stat().st_size if item.is_file() else 0,
+                )
             )
-        )
-    return entries
+        return out
+
+    return await asyncio.to_thread(_scan)
 
 
 @router.post("/")
@@ -78,14 +89,19 @@ async def create_entry(
         raise HTTPException(400, "Not a directory")
     target = base / name
     resolved = target.resolve()
-    if not str(resolved).startswith(str(root)):
+    try:
+        resolved.relative_to(root.resolve())
+    except ValueError:
         raise HTTPException(403, "Path traversal detected")
     if target.exists():
         raise HTTPException(409, "Already exists")
+
     if data.is_dir:
-        target.mkdir(parents=False, exist_ok=False)
+        await asyncio.to_thread(target.mkdir, False, False)
     else:
-        target.write_text("", encoding="utf-8")
+        # Use aiofiles for async empty-file creation
+        async with aiofiles.open(target, "w", encoding="utf-8"):
+            pass
     rel = str(target.relative_to(root)).replace("\\", "/")
     return {"ok": True, "path": rel, "is_dir": data.is_dir}
 
@@ -101,9 +117,11 @@ async def read_file(
     if not target.is_file():
         raise HTTPException(404, "File not found")
     try:
-        content = target.read_text(encoding="utf-8")
+        async with aiofiles.open(target, "r", encoding="utf-8") as f:
+            content = await f.read()
     except UnicodeDecodeError:
-        content = f"[Binary file, {target.stat().st_size} bytes]"
+        size = (await asyncio.to_thread(target.stat)).st_size
+        content = f"[Binary file, {size} bytes]"
     return {"path": file_path, "content": content}
 
 
@@ -116,8 +134,10 @@ async def write_file(
 ):
     root = project_root(project)
     target = safe_path(root, file_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(data.content, encoding="utf-8")
+    # mkdir off the event loop (parents=True, exist_ok=True so re-writes are fine)
+    await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+    async with aiofiles.open(target, "w", encoding="utf-8") as f:
+        await f.write(data.content)
     return {"ok": True, "path": file_path}
 
 
@@ -132,8 +152,7 @@ async def delete_file(
     if not target.exists():
         raise HTTPException(404, "File not found")
     if target.is_dir():
-        import shutil
-        shutil.rmtree(target)
+        await asyncio.to_thread(shutil.rmtree, target)
     else:
-        target.unlink()
+        await asyncio.to_thread(target.unlink)
     return {"ok": True}

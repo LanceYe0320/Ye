@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 from pathlib import Path
@@ -98,12 +100,14 @@ async def stream_command(
         queue: asyncio.Queue = asyncio.Queue()
 
         async def _read(stream, name):
-            while True:
-                line = await stream.readline()
-                if not line:
-                    break
-                await queue.put({"type": name, "data": line.decode("utf-8", errors="replace")})
-            await queue.put(None)
+            try:
+                while True:
+                    line = await stream.readline()
+                    if not line:
+                        break
+                    await queue.put({"type": name, "data": line.decode("utf-8", errors="replace")})
+            finally:
+                await queue.put(None)
 
         stdout_task = asyncio.create_task(_read(proc.stdout, "stdout"))
         stderr_task = asyncio.create_task(_read(proc.stderr, "stderr"))
