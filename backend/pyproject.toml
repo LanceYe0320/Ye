@@ -2,12 +2,10 @@
 name = "ai-coding-assistant"
 version = "0.1.0"
 description = "A cross-platform AI coding assistant (Claude Code clone)"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    "openai>=1.60.0",
-    "zhipuai>=2.1.0",
     "sqlalchemy>=2.0.0",
     "aiosqlite>=0.21.0",
     "python-jose[cryptography]>=3.3.0",
@@ -15,31 +13,35 @@ dependencies = [
     "bcrypt>=4.0.0,<4.1.0",
     "python-multipart>=0.0.18",
     "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
     "websockets>=14.0",
     "aiofiles>=24.0.0",
-    "chromadb>=0.5.0",
     "rich>=13.0.0",
     "prompt_toolkit>=3.0.0",
+    "duckduckgo-search>=7.0.0",
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]
+search = [
+    "chromadb>=0.5.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
-    "httpx>=0.28.0",
     "ruff>=0.8.0",
+    "mypy>=1.0.0",
 ]
 
 [project.scripts]
 ye = "app.cli.main:main"
+yjl = "app.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["app*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
