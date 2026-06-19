@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import ast
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -100,51 +103,6 @@ def chunk_python_file(file_path: str, content: str) -> list[CodeChunk]:
     return chunks
 
 
-def chunk_js_ts_file(file_path: str, content: str, language: str) -> list[CodeChunk]:
-    chunks = []
-    lines = content.splitlines()
-    current_chunk_start = 0
-    brace_depth = 0
-    in_function = False
-    func_name = ''
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-
-        if any(kw in stripped for kw in ['function ', 'const ', 'let ', 'var ']):
-            if '(' in stripped and ('{' in stripped or '=>' in stripped):
-                if not in_function:
-                    current_chunk_start = i
-                    in_function = True
-                    for part in stripped.replace('function', '').split('(')[0].split():
-                        if part and part not in ('const', 'let', 'var', 'async', 'export', 'default'):
-                            func_name = part.strip()
-                            break
-
-        if in_function:
-            brace_depth += line.count('{') - line.count('}')
-            if '=>' in stripped:
-                brace_depth += 1
-
-            if brace_depth <= 0 and i > current_chunk_start:
-                chunks.append(CodeChunk(
-                    file_path=file_path,
-                    language=language,
-                    content='\n'.join(lines[current_chunk_start:i + 1]),
-                    chunk_type='function',
-                    name=func_name,
-                    start_line=current_chunk_start + 1,
-                    end_line=i + 1,
-                ))
-                in_function = False
-                func_name = ''
-
-    if not chunks:
-        chunks = _chunk_by_lines(file_path, content, language, max_lines=80)
-
-    return chunks
-
-
 def _chunk_by_lines(
     file_path: str, content: str, language: str, max_lines: int = 80
 ) -> list[CodeChunk]:
@@ -170,36 +128,68 @@ def index_file(file_path: str, content: str | None = None) -> list[CodeChunk]:
 
     if content is None:
         try:
-            content = Path(file_path).read_text(encoding='utf-8')
+            content = Path(file_path).read_text(encoding="utf-8")
         except Exception as e:
             logger.warning(f"Cannot read {file_path}: {e}")
             return []
 
-    if language == 'python':
+    if language == "python":
         return chunk_python_file(file_path, content)
-    elif language in ('javascript', 'typescript'):
-        return chunk_js_ts_file(file_path, content, language)
-    else:
-        return _chunk_by_lines(file_path, content, language)
+
+    # Brace-delimited languages (JS/TS/Go/Rust/Java/C/C++/Vue) get structural
+    # chunking via the pure-Python brace parser — named function/class blocks
+    # instead of fixed-size line windows. No external deps (tree-sitter-free).
+    from app.indexer._brace_parser import chunk_brace_language, supports_language
+    if supports_language(language):
+        return chunk_brace_language(file_path, content, language)
+
+    # Everything else (css, json, yaml, markdown, sql, shell, html) — line windows
+    return _chunk_by_lines(file_path, content, language)
 
 
-def index_directory(directory: str) -> list[CodeChunk]:
-    all_chunks = []
+def index_directory(
+    directory: str,
+    max_workers: int = 4,
+    skip_paths: set[str] | None = None,
+) -> list[CodeChunk]:
+    """Index all code files under a directory.
+
+    skip_paths: optional set of relative paths (forward-slash) to SKIP. Used by
+    the incremental indexer to avoid re-parsing files whose mtime hasn't
+    changed since the last index.
+    """
     root = Path(directory)
+    skip_paths = skip_paths or set()
 
+    # Collect file paths first (rglob itself can't be parallelized)
+    file_paths: list[tuple[Path, str]] = []
     for filepath in root.rglob('*'):
         if not filepath.is_file():
             continue
         rel_path = str(filepath.relative_to(root)).replace('\\', '/')
         if not should_index(rel_path):
             continue
+        if rel_path in skip_paths:
+            continue
+        file_paths.append((filepath, rel_path))
+
+    all_chunks: list[CodeChunk] = []
+
+    def _index_one(item: tuple[Path, str]) -> list[CodeChunk]:
+        filepath, rel_path = item
         try:
             chunks = index_file(str(filepath))
             for chunk in chunks:
                 chunk.file_path = rel_path
-            all_chunks.extend(chunks)
+            return chunks
         except Exception as e:
             logger.warning(f"Error indexing {rel_path}: {e}")
+            return []
 
-    logger.info(f"Indexed {len(all_chunks)} chunks from {directory}")
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_index_one, item): item for item in file_paths}
+        for future in as_completed(futures):
+            all_chunks.extend(future.result())
+
+    logger.info(f"Indexed {len(all_chunks)} chunks from {len(file_paths)} files in {directory}")
     return all_chunks
