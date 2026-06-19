@@ -1,0 +1,13 @@
+{
+  "_comment": "MCP server config for Ye/yjl. Place a copy at ~/.ye/mcp_servers.json. Each server exposes tools via the Model Context Protocol — Ye discovers and calls them automatically. stdio servers run as subprocesses; sse servers are reached over HTTP.",
+  "servers": {
+    "example-stdio": {
+      "command": ["uvx", "mcp-server-sqlite", "--db-path", "./data/example.db"],
+      "env": {}
+    },
+    "example-sse": {
+      "url": "http://localhost:8080",
+      "transport": "sse"
+    }
+  }
+}
