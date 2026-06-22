@@ -35,10 +35,16 @@ logger = logging.getLogger(__name__)
 
 ToolHandler = Callable[..., Awaitable[str]]
 
-# Max consecutive calls to the SAME tool before doom-loop kicks in
-_DOOM_LOOP_THRESHOLD = 8
+# Max consecutive calls to the SAME tool+args before doom-loop kicks in.
+# Tuned between opencode's strict 3 and the original 8: Chinese LLMs (GLM,
+# DeepSeek) sometimes need a couple of legitimate retries, but 8 let real
+# loops burn through budget. 4 catches stuck loops fast while tolerating
+# one or two honest retries.
+_DOOM_LOOP_THRESHOLD = 4
 # Public alias (tests / external code may import this name)
 DOOM_LOOP_THRESHOLD = _DOOM_LOOP_THRESHOLD
+# Max consecutive calls to the same tool NAME (any args) for non-exempt tools.
+_DOOM_LOOP_NAME_THRESHOLD = 6
 # Read-only tools exempt from doom loop — reading many files is normal exploration
 _DOOM_LOOP_EXEMPT = {"read_file", "grep", "glob", "list_files", "search_codebase", "append_file", "project_overview"}
 
@@ -278,16 +284,24 @@ class ToolExecutor:
                     is_error=True,
                 ), 0
 
-        # --- User approval for dangerous tools (via permissions system) ---
+        # --- User approval for dangerous tools (via permission rules) ---
+        # Consult the triplet ruleset first (permission, pattern, action) —
+        # it supersedes the coarse legacy tool-name map and can express
+        # rules like "run_command git * → allow, run_command rm * → deny".
+        # Falls back to the legacy map if the ruleset module is unavailable.
         try:
-            from app.permissions import check_tool as _check_perm
-            _perm_result = _check_perm(tc.name)
+            from app.permission_rules import check_tool as _check_rules
+            _perm_result = _check_rules(tc.name, **tc.arguments)
         except Exception:
-            _perm_result = "ask"
+            try:
+                from app.permissions import check_tool as _check_perm
+                _perm_result = _check_perm(tc.name)
+            except Exception:
+                _perm_result = "ask"
         if _perm_result == "deny":
             return ToolResult(
                 tool_call_id=tc.id,
-                content=f"Tool '{tc.name}' is denied by permissions config.",
+                content=f"Tool '{tc.name}' is denied by permission rules.",
                 is_error=True,
             ), 0
         if _perm_result == "ask" and self._on_approval_needed is not None:
@@ -558,17 +572,20 @@ class ToolExecutor:
                 return last_n[0][0]
 
         # Rule 2: for NON-exempt tools, also flag the same tool name called
-        # many times even with differing args (12+ times).
+        # many times even with differing args. Two sub-rules:
+        #   (a) same tool NAME (any args) _DOOM_LOOP_THRESHOLD times in a row,
+        #   (b) same tool NAME _DOOM_LOOP_NAME_THRESHOLD times within the
+        #       recent window (looser — catches slow drift loops).
         non_exempt_history = [
             (n, a) for n, a in candidate if n not in _DOOM_LOOP_EXEMPT
         ]
         if len(non_exempt_history) >= _DOOM_LOOP_THRESHOLD:
             last_n = non_exempt_history[-_DOOM_LOOP_THRESHOLD:]
-            if len(set(last_n)) == 1:
+            if len(set(n for n, _ in last_n)) == 1:
                 return last_n[0][0]
 
-            tool_names_only = [name for name, _ in non_exempt_history[-12:]]
-            if len(tool_names_only) >= 12 and len(set(tool_names_only)) == 1:
+            tool_names_only = [name for name, _ in non_exempt_history[-_DOOM_LOOP_NAME_THRESHOLD:]]
+            if len(tool_names_only) >= _DOOM_LOOP_NAME_THRESHOLD and len(set(tool_names_only)) == 1:
                 return tool_names_only[0]
 
         return None
