@@ -176,6 +176,10 @@ class SessionState:
     # Injected into subsequent compaction prompts so the model updates the
     # existing summary incrementally rather than rebuilding from scratch.
     last_summary: str | None = None
+    # Snapshot history: list of (hash, timestamp, message_index, label).
+    # Each entry is a restore point captured automatically after tool steps
+    # (and manually via /snapshot). The most recent is at the end.
+    snapshots: list = field(default_factory=list)
 
 
 _MODES = ("normal", "plan", "auto_accept")
@@ -457,6 +461,9 @@ SLASH_COMMANDS = [
     ("/ss",            "Search past sessions (full-text)"),
     ("/worktree",      "Manage git worktrees"),
     ("/permissions",   "View or set tool permissions (auto/ask/deny)"),
+    ("/snapshot",      "Capture a file-state snapshot for /revert"),
+    ("/revert",        "Revert files to the last snapshot (or /revert <hash>)"),
+    ("/snapshots",     "List recent snapshot hashes with change counts"),
     ("/exit",          "Exit the assistant"),
 ]
 
@@ -754,6 +761,121 @@ async def _cmd_diff(state: SessionState) -> None:
 
     if not any_output:
         console.print("[dim]Working tree clean — no changes detected.[/]")
+
+
+async def _cmd_snapshot(state: SessionState, label: str = "") -> None:
+    """Capture a file-state snapshot for later /revert.
+
+    Snapshots are stored in an isolated git bare repo (~/.ye/data/snapshot/...),
+    never touching the user's own git history. Each snapshot records the full
+    working-tree state as a tree hash.
+    """
+    from app import snapshot as snap_mod
+    h = snap_mod.snapshot(state.cwd)
+    if h is None:
+        console.print(
+            "[yellow]Snapshot unavailable.[/] "
+            "The working directory must be inside a git repo."
+        )
+        return
+    entry = {
+        "hash": h,
+        "time": time.time(),
+        "label": label or f"snapshot-{len(state.snapshots) + 1}",
+    }
+    state.snapshots.append(entry)
+    console.print(
+        f"[green]Snapshot captured:[/] {h[:12]} "
+        f"([dim]{entry['label']}[/], #{len(state.snapshots)})"
+    )
+
+
+async def _cmd_snapshots(state: SessionState) -> None:
+    """List recent snapshots with pending change counts."""
+    if not state.snapshots:
+        console.print("[dim]No snapshots yet. Use /snapshot to capture one.[/]")
+        return
+    from app import snapshot as snap_mod
+    from rich.table import Table
+    table = Table(title="Snapshots", show_lines=False)
+    table.add_column("#", style="dim")
+    table.add_column("Hash", style="cyan")
+    table.add_column("Label", style="white")
+    table.add_column("Pending changes", style="yellow")
+    for i, entry in enumerate(state.snapshots, 1):
+        changed = snap_mod.diff_files(state.cwd, entry["hash"])
+        table.add_row(str(i), entry["hash"][:12], entry["label"], str(len(changed)))
+    console.print(table)
+
+
+async def _cmd_revert(state: SessionState, arg: str) -> None:
+    """Revert the working tree (or specific files) to a snapshot.
+
+    Usage:
+      /revert              — revert all changed files to the LAST snapshot
+      /revert <hash>       — revert to a specific snapshot hash
+      /revert <#n>         — revert to the nth snapshot from /snapshots
+      /revert <hash> f1 f2 — revert only specific files
+    """
+    from app import snapshot as snap_mod
+    if not state.snapshots:
+        console.print("[dim]No snapshots to revert to. Use /snapshot first.[/]")
+        return
+    parts = arg.split() if arg else []
+    target_entry = None
+    file_args: list[str] = []
+    if parts:
+        first = parts[0]
+        # Select snapshot by hash prefix or #n
+        if first.startswith("#"):
+            try:
+                idx = int(first[1:]) - 1
+                if 0 <= idx < len(state.snapshots):
+                    target_entry = state.snapshots[idx]
+            except ValueError:
+                pass
+        elif len(first) >= 7:
+            for e in state.snapshots:
+                if e["hash"].startswith(first):
+                    target_entry = e
+                    break
+        if target_entry is None and not first.startswith("#"):
+            # Treat first token as a file if it didn't match a snapshot
+            file_args.append(first)
+        file_args.extend(parts[1:] if target_entry else parts[1:])
+    if target_entry is None:
+        target_entry = state.snapshots[-1]
+
+    if file_args:
+        n = snap_mod.revert_files(state.cwd, target_entry["hash"], file_args)
+        console.print(
+            f"[green]Reverted {n} file(s) to snapshot[/] "
+            f"{target_entry['hash'][:12]} ([dim]{target_entry['label']}[/])"
+        )
+    else:
+        changed = snap_mod.diff_files(state.cwd, target_entry["hash"])
+        if not changed:
+            console.print("[dim]No changes since that snapshot — nothing to revert.[/]")
+            return
+        try:
+            answer = input(
+                f"  Revert {len(changed)} changed file(s) to snapshot "
+                f"{target_entry['hash'][:12]}? This overwrites working-tree state. [y/N] "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        confirmed = answer in ("y", "yes")
+        if not confirmed:
+            console.print("[dim]Revert cancelled.[/]")
+            return
+        ok = snap_mod.restore(state.cwd, target_entry["hash"])
+        if ok:
+            console.print(
+                f"[green]Restored working tree to snapshot[/] "
+                f"{target_entry['hash'][:12]} ([dim]{target_entry['label']}[/])"
+            )
+        else:
+            console.print("[red]Revert failed — see log for details.[/]")
 
 
 async def _cmd_init(state: SessionState) -> None:
@@ -1805,6 +1927,24 @@ async def _run_inner(cli_args: dict):
             # --- Auto-save project state to .ye/project_state.md ---
             _save_project_state(state, "".join(assistant_parts))
 
+            # --- Auto-snapshot: if this turn mutated files, capture a restore point ---
+            # Only snapshot when tools actually ran (pending_tool_count tracks
+            # tool calls in this turn). Keeps empty turns from spamming git.
+            if pending_tool_count > 0 and state.mode != "plan":
+                try:
+                    from app import snapshot as snap_mod
+                    h = snap_mod.snapshot(state.cwd)
+                    if h is not None:
+                        # Dedup: don't record an identical tree twice in a row.
+                        if not state.snapshots or state.snapshots[-1]["hash"] != h:
+                            state.snapshots.append({
+                                "hash": h,
+                                "time": time.time(),
+                                "label": f"auto (turn, {pending_tool_count} tool)",
+                            })
+                except Exception:
+                    pass  # snapshot is a safety net, never block the turn
+
             # --- TodoWrite: render live progress if the list is active ---
             if state.todo_list is not None and not state.todo_list.is_empty:
                 done, total = state.todo_list.progress()
@@ -1896,6 +2036,15 @@ async def _handle_command(
 
     elif command == "/diff":
         await _cmd_diff(state)
+
+    elif command == "/snapshot":
+        await _cmd_snapshot(state, label=arg.strip())
+
+    elif command == "/snapshots":
+        await _cmd_snapshots(state)
+
+    elif command == "/revert":
+        await _cmd_revert(state, arg.strip())
 
     elif command == "/init":
         await _cmd_init(state)
