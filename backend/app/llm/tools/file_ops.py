@@ -153,47 +153,54 @@ async def edit_file(
     except Exception as e:
         return f"Error reading file: {e}"
 
-    # Normalize line endings for matching (handle CRLF vs LF)
+    # Fuzzy multi-level replace (handles whitespace/indentation/escape
+    # differences that LLMs frequently introduce). Falls back to exact match
+    # on level 0. See app.llm.fuzzy_replace for the full chain.
+    from app.llm.fuzzy_replace import fuzzy_replace
+
+    had_crlf = "\r\n" in content
     norm_content = content.replace("\r\n", "\n")
     norm_old = old_string.replace("\r\n", "\n")
+    norm_new = new_string.replace("\r\n", "\n")
 
-    count = norm_content.count(norm_old)
-    if count == 0:
-        # Provide helpful context: show nearby lines for partial matches
-        old_lines = norm_old.splitlines()
-        content_lines = norm_content.splitlines()
-        hints = []
-        if old_lines:
-            first_line = old_lines[0].strip()
-            for i, cl in enumerate(content_lines):
-                if first_line in cl:
-                    start = max(0, i - 2)
-                    end = min(len(content_lines), i + len(old_lines) + 2)
-                    ctx = content_lines[start:end]
-                    ctx_str = "\n".join(f"  {start + j + 1}: {line}" for j, line in enumerate(ctx))
-                    hints.append(f"Line {start + 1}-{end}:\n{ctx_str}")
-                    if len(hints) >= 2:
-                        break
-        msg = f"Error: old_string not found in {file_path}."
-        if hints:
-            msg += f"\nPossible match near:\n{hints[0]}"
-        else:
-            msg += "\nThe text may have changed. Use read_file to see current content."
+    result = fuzzy_replace(norm_content, norm_old, norm_new, replace_all=replace_all)
+
+    if result.content is None:
+        # On failure, surface helpful context for self-correction.
+        msg = f"Error editing {file_path}: {result.error}"
+        if "not find" in (result.error or "").lower():
+            old_lines = norm_old.splitlines()
+            content_lines = norm_content.splitlines()
+            hints = []
+            if old_lines:
+                first_line = old_lines[0].strip() if old_lines[0].strip() else (old_lines[1].strip() if len(old_lines) > 1 else "")
+                for i, cl in enumerate(content_lines):
+                    if first_line and first_line in cl:
+                        start = max(0, i - 2)
+                        end = min(len(content_lines), i + len(old_lines) + 2)
+                        ctx = content_lines[start:end]
+                        ctx_str = "\n".join(f"  {start + j + 1}: {line}" for j, line in enumerate(ctx))
+                        hints.append(f"Line {start + 1}-{end}:\n{ctx_str}")
+                        if len(hints) >= 2:
+                            break
+            if hints:
+                msg += f"\nPossible match near:\n{hints[0]}"
+            else:
+                msg += "\nUse read_file to see the current content and copy the exact text."
         return msg
-    if count > 1 and not replace_all:
-        return (
-            f"Error: old_string found {count} times in {file_path}. "
-            "Set replace_all=true to replace all occurrences, or include more surrounding context to make it unique."
-        )
 
-    new_content = norm_content.replace(norm_old, new_string, 0 if replace_all else 1)
+    new_content = result.content
     # Restore original line endings
-    if "\r\n" in content:
+    if had_crlf:
         new_content = new_content.replace("\n", "\r\n")
     p.write_text(new_content, encoding="utf-8")
     _invalidate_index_cache(file_path)
-    lines_changed = new_string.count("\n") + 1
-    return f"Replaced {count} occurrence(s) in {file_path} (~{lines_changed} lines)"
+    level_name = ["exact", "line-trimmed", "block-anchor", "whitespace-norm",
+                  "indent-flex", "escape-norm", "trimmed-boundary",
+                  "context-aware", "multi-occurrence"][result.replacer_index or 0]
+    lines_changed = max(norm_new.count("\n"), norm_old.count("\n")) + 1
+    suffix = "" if level_name == "exact" else f" [fuzzy: {level_name}]"
+    return f"Replaced text in {file_path} (~{lines_changed} lines){suffix}"
 
 
 TOOLS.append({

@@ -303,6 +303,27 @@ class ToolExecutor:
         result = await self.execute_tool(tc)
         duration_ms = (time.time() - start) * 1000
 
+        # --- Tool-call repair: salvage malformed calls from GLM/DeepSeek ---
+        # When the first execution fails AND we haven't already retried the
+        # repaired version, attempt a deterministic repair (snake_case→camel,
+        # alias fix, edit_file slot swap, glob normalization) and re-run once.
+        if result.is_error and not getattr(tc, "_repaired", False):
+            try:
+                from app.llm.tool_repair import repair_tool_call
+                known_names = [d.name for d in self._definitions]
+                repaired = repair_tool_call(tc, known_names)
+            except Exception:
+                repaired = None
+            if repaired is not None and (repaired.name != tc.name or repaired.arguments != tc.arguments):
+                # Re-route through the full executor path so permission /
+                # approval / trace still apply to the repaired call.
+                logger.info("Attempting repaired tool call: %s", repaired.name)
+                # Mark so we don't recurse forever on the repaired call.
+                object.__setattr__(repaired, "_repaired", True)
+                return await self._execute_single_tool(
+                    repaired, current_messages, agent_role
+                )
+
         # --- Failure Handler: classify and EXECUTE strategy ---
         if result.is_error and self._failure_handler is not None:
             from app.failure import FailureAction
