@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-import asyncio
+# NOTE: asyncio is deliberately NOT imported at module top. On Windows it
+# costs ~105ms (windows_events IOCP + ssl + socket setup) which is pure
+# latency before the startup banner shows. It's imported lazily on first
+# use — see _ensure_asyncio(). All `asyncio.xxx` references are either
+# inside function bodies (where `import asyncio` is cheap after first load)
+# or in stringized type annotations (from __future__ import annotations),
+# so deferring is safe.
 import json
 import logging
 import os
@@ -52,6 +58,28 @@ class _ConsoleProxy:
         return getattr(_get_console(), name)
 
 console = _ConsoleProxy()
+
+
+class _LazyAsyncio:
+    """Lazy asyncio loader — defers the ~105ms asyncio import until first use.
+
+    ``asyncio`` is referenced throughout this module but only ever *called*
+    inside function bodies (never at import time). By loading it on first
+    attribute access instead of at module top, the startup banner can render
+    before paying asyncio's Windows IOCP/SSL setup cost. Subsequent accesses
+    hit ``sys.modules`` and are effectively free.
+    """
+
+    def __getattr__(self, name):
+        global asyncio
+        import asyncio as _asyncio_mod
+        asyncio = _asyncio_mod  # replace proxy with real module for speed
+        return getattr(asyncio, name)
+
+
+# Module-level ``asyncio`` name — starts as the lazy proxy, gets swapped to
+# the real module on first access (see _LazyAsyncio.__getattr__).
+asyncio = _LazyAsyncio()
 
 # Lazy imports — heavy modules loaded only when first accessed
 _mem = None
@@ -370,53 +398,88 @@ when working in this directory.
 # ---------------------------------------------------------------------------
 
 
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """Convert '#4ade80' → (74, 222, 128). For ANSI 24-bit escape sequences."""
+    h = hex_color.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _ansi(color: str | None, bold: bool = False, dim: bool = False) -> str:
+    """Build an ANSI 24-bit foreground escape prefix.
+
+    ``color`` is a '#rrggbb' hex string or None (no color). Supports bold/dim.
+    Use ``_ansi_reset`` to return to defaults. This lets the banner render
+    with the exact same colors as the Rich version but WITHOUT importing
+    Rich — keeping ~190ms off the startup critical path.
+    """
+    codes = []
+    if bold:
+        codes.append("1")
+    if dim:
+        codes.append("2")
+    if color:
+        r, g, b = _hex_to_rgb(color)
+        codes.append(f"38;2;{r};{g};{b}")
+    if not codes:
+        return ""
+    return f"\033[{';'.join(codes)}m"
+
+
+_ANSI_RESET = "\033[0m"
+
+
 def _build_banner(version: str, model: str, cwd: str):
     """Plan G startup banner — minimal, borderless, 2-3 lines.
 
-    Inspired by Claude Code / Warp / Raycast: a tiny gem glyph + gradient
-    brand name on line 1, a dense status row on line 2, an optional hint
-    row on line 3. No box, no big logo. Gem glyph auto-degrades to ASCII
-    on legacy GBK consoles.
+    Rendered as a plain ANSI-escaped string (no Rich objects) so the banner
+    can show before Rich is imported — saving ~190ms on the startup critical
+    path. Colors are 24-bit true-color, matching the theme hex values, so
+    the look is identical to the previous Rich-rendered version.
     """
-    from rich.text import Text
-    from rich.console import Group
-    from app.cli.theme import PRIMARY, PRIMARY_DEEP, ACCENT, ACCENT_SOFT, MUTED, MUTED_LIGHT, gem_glyph
+    from app.cli.theme import PRIMARY, PRIMARY_DEEP, ACCENT, MUTED, MUTED_LIGHT, gem_glyph
 
     display_cwd = cwd if len(cwd) <= 44 else "..." + cwd[-43:]
 
-    # Resolve the model's context window for display
-    try:
-        from app.llm.zhipu_provider import MODELS
-        ctx = MODELS.get(model)
-        max_ctx = _format_tokens(ctx.max_tokens) if ctx else ""
-    except Exception:
-        max_ctx = ""
+    # Resolve the model's context window for display. Use a tiny static table
+    # instead of importing the full provider module — that import pulls in
+    # asyncio/httpx (~100ms) which we're deliberately keeping off the startup
+    # path. The provider's MODELS dict is the source of truth; this is just
+    # a display cache that's good enough for the banner.
+    _BANNER_CTX = {
+        "glm-5.2": "1.0M",
+        "glm-5": "1.0M",
+        "glm-4.6": "200K",
+        "glm-4-plus": "128K",
+        "glm-4": "128K",
+        "glm-4-air": "128K",
+    }
+    max_ctx = _BANNER_CTX.get(model, "")
 
     gem = gem_glyph()
+    b = _ansi  # shorthand
 
-    line1 = Text()
-    line1.append("  ", style="")
-    line1.append(gem, style=f"bold {PRIMARY}")
-    line1.append(" ", style="")
-    # Gradient brand: Y (bright green) → e (deep green)
-    line1.append("Y", style=f"bold {PRIMARY}")
-    line1.append("e", style=f"bold {PRIMARY_DEEP}")
-    line1.append("   ", style="")
-    line1.append("AI Coding Agent", style=MUTED_LIGHT)
+    # Line 1: gem + "Ye" gradient + tagline
+    line1 = (
+        "  "
+        + b(PRIMARY, bold=True) + gem + _ANSI_RESET + " "
+        + b(PRIMARY, bold=True) + "Y" + _ANSI_RESET
+        + b(PRIMARY_DEEP, bold=True) + "e" + _ANSI_RESET
+        + "   "
+        + b(MUTED_LIGHT) + "AI Coding Agent" + _ANSI_RESET
+    )
 
-    line2 = Text()
-    line2.append("  ", style="")
-    line2.append(f"v{version}", style=MUTED)
-    line2.append("   ", style="")
-    line2.append(f"{model}", style=f"bold {ACCENT}")
-    if max_ctx:
-        line2.append(f"  ({max_ctx})", style=MUTED)
-    line2.append("   ", style="")
-    line2.append("Ready.", style=PRIMARY)
-    line2.append("   ", style="")
-    line2.append(display_cwd, style=f"dim {MUTED_LIGHT}")
+    # Line 2: version · model (ctx) · Ready · cwd
+    line2 = (
+        "  "
+        + b(MUTED) + f"v{version}" + _ANSI_RESET + "   "
+        + b(ACCENT, bold=True) + f"{model}" + _ANSI_RESET
+        + (b(MUTED) + f"  ({max_ctx})" + _ANSI_RESET if max_ctx else "")
+        + "   "
+        + b(PRIMARY) + "Ready." + _ANSI_RESET + "   "
+        + b(MUTED_LIGHT, dim=True) + display_cwd + _ANSI_RESET
+    )
 
-    return Group(line1, Text(""), line2)
+    return line1 + "\n\n" + line2
 
 
 # Slash commands definition (shared between help and completer)
@@ -1241,10 +1304,7 @@ async def _run(cli_args: dict):
 
 
 async def _run_inner(cli_args: dict):
-    from rich.panel import Panel
-    from rich import box
     from app.config import settings
-    from app.cli.theme import PRIMARY, PRIMARY_DEEP, DANGER, ACCENT, MUTED, MUTED_LIGHT
 
     # --version: print and exit early
     if cli_args.get("version"):
@@ -1252,16 +1312,23 @@ async def _run_inner(cli_args: dict):
         return
 
     # --- Compact startup banner (only in interactive mode) ---
+    # Banner is a plain ANSI string (no Rich) so it renders BEFORE the
+    # ~190ms Rich import — the user sees it almost instantly.
     if cli_args.get("prompt") is None:
-        console.print(_build_banner(
+        banner = _build_banner(
             version=settings.VERSION,
             model=cli_args.get("model") or settings.ZHIPU_MODEL,
             cwd=str(Path.cwd()),
-        ))
-        console.print()
+        )
+        sys.stdout.write(banner + "\n\n")
+        sys.stdout.flush()
 
     if not settings.ZHIPU_API_KEY:
         # Graceful, well-formatted configuration prompt (no ugly red box).
+        # Rich imported here only when the key is missing — off the happy path.
+        from rich.panel import Panel
+        from rich import box
+        from app.cli.theme import DANGER, ACCENT, MUTED, MUTED_LIGHT
         console.print(Panel(
             f"[bold {DANGER}]API key not configured[/bold {DANGER}]\n\n"
             f"[{MUTED_LIGHT}]Add your Zhipu key to [bold].env[/bold] (in the backend/ folder):[/]\n"
