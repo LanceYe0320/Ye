@@ -88,3 +88,19 @@ def test_javascript_clean_when_node_absent(tmp_path: Path):
     # Should not raise regardless of whether node is present
     result = diagnose(f)
     assert isinstance(result, list)
+
+
+def test_no_pycache_leak(tmp_path: Path):
+    """Diagnosing a Python file must NOT leave __pycache__ in its dir."""
+    f = tmp_path / "clean.py"
+    f.write_text("x = 1\n", encoding="utf-8")
+    diagnose(f)
+    assert not (tmp_path / "__pycache__").exists()
+
+
+def test_no_pycache_leak_on_broken_file(tmp_path: Path):
+    """Even a file with syntax errors shouldn't leak .pyc files."""
+    f = tmp_path / "broken.py"
+    f.write_text("def (\n", encoding="utf-8")
+    diagnose(f)
+    assert not (tmp_path / "__pycache__").exists()

@@ -284,11 +284,14 @@ class ToolExecutor:
                     is_error=True,
                 ), 0
 
-        # --- User approval for dangerous tools (via permission rules) ---
-        # Consult the triplet ruleset first (permission, pattern, action) —
-        # it supersedes the coarse legacy tool-name map and can express
-        # rules like "run_command git * → allow, run_command rm * → deny".
-        # Falls back to the legacy map if the ruleset module is unavailable.
+        # --- Operation-level permission (triplet ruleset) ---
+        # This is DISTINCT from the role-based check above: check_permission()
+        # gates which agent ROLES may use a tool at all (allow/deny). This
+        # triplet ruleset gates specific OPERATIONS by (tool, pattern) and
+        # adds the "ask" tier for interactive approval. They compose:
+        # role check first (hard gate), then operation check (soft gate).
+        # Falls back to the legacy coarse tool-name map if the ruleset
+        # module is unavailable.
         try:
             from app.permission_rules import check_tool as _check_rules
             _perm_result = _check_rules(tc.name, **tc.arguments)
@@ -333,7 +336,9 @@ class ToolExecutor:
                 # approval / trace still apply to the repaired call.
                 logger.info("Attempting repaired tool call: %s", repaired.name)
                 # Mark so we don't recurse forever on the repaired call.
-                object.__setattr__(repaired, "_repaired", True)
+                # ToolCall is a plain dataclass, so a plain attr set is fine
+                # (kept under a sentinel name to avoid colliding with real fields).
+                repaired._repaired = True  # type: ignore[attr-defined]
                 return await self._execute_single_tool(
                     repaired, current_messages, agent_role
                 )

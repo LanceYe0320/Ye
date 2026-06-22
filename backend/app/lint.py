@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -41,10 +42,22 @@ def _creation_flags() -> int:
 def _diagnose_python(path: Path) -> list[str]:
     """Python: py_compile for syntax + optional pyflakes for names."""
     errors: list[str] = []
-    # 1. py_compile — catches syntax errors, always available (stdlib)
+    # 1. py_compile — catches syntax errors, always available (stdlib).
+    # Write the .pyc to a temp file so we don't litter __pycache__ in the
+    # user's source tree on every edit_file call. (os.devnull doesn't work
+    # on Windows — py_compile refuses to write to the "nul" device.)
+    import tempfile
     try:
         import py_compile
-        py_compile.compile(str(path), doraise=True)
+        with tempfile.NamedTemporaryFile(suffix=".pyc", delete=False) as tmp:
+            tmp_path = tmp.name
+        try:
+            py_compile.compile(str(path), doraise=True, cfile=tmp_path)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
     except py_compile.PyCompileError as e:
         # e.msg / e.exc_msg already include file:line detail
         msg = str(e).strip().splitlines()

@@ -25,6 +25,26 @@ def test_identical_old_new_rejected():
     assert "identical" in res.error.lower()
 
 
+def test_empty_old_string_rejected_without_hang():
+    """Empty old_string must return immediately, not infinite-loop."""
+    res = fuzzy_replace("hello", "", "X")
+    assert res.content is None
+    assert "empty" in res.error.lower()
+
+
+def test_old_string_longer_than_content():
+    """old_string longer than content is simply not found, no crash."""
+    res = fuzzy_replace("ab", "abcdef", "X")
+    assert res.content is None
+    assert "not find" in res.error.lower() or "could not" in res.error.lower()
+
+
+def test_delete_via_empty_new_string():
+    """Replacing with empty new_string deletes the match."""
+    res = fuzzy_replace("hello world", "world", "")
+    assert res.content == "hello "
+
+
 # ---------------------------------------------------------------------------
 # Level 1: line-trimmed (trailing whitespace differs)
 # ---------------------------------------------------------------------------

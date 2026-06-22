@@ -236,6 +236,11 @@ def _escape_normalized_replacer(content: str, find: str):
 def _multi_occurrence_replacer(content: str, find: str):
     # Yields ``find`` once for each exact occurrence — the caller decides
     # whether multiple occurrences are acceptable (replace_all) or an error.
+    if not find:
+        # Empty find would loop forever (find("") always returns the start
+        # index without advancing). The entry point already rejects empty
+        # old_string, but defend here too for direct callers.
+        return
     start = 0
     while True:
         idx = content.find(find, start)
@@ -332,6 +337,15 @@ def fuzzy_replace(content: str, old_string: str, new_string: str, replace_all: b
     """
     if old_string == new_string:
         return ReplaceResult(None, None, None, "old_string and new_string are identical — nothing to replace.")
+    # Empty old_string is invalid — it would cause infinite loops in the
+    # multi-occurrence replacer (find("") always returns the start index) and
+    # has no meaningful replacement semantics. Models do emit this occasionally.
+    if not old_string:
+        return ReplaceResult(
+            None, None, None,
+            "old_string is empty — nothing to search for. "
+            "Use write_file if you want to replace the whole file.",
+        )
 
     not_found = True
     for idx, replacer in enumerate(_REPLACERS):
