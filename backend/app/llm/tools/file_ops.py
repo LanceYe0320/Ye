@@ -120,7 +120,17 @@ async def write_file(path: str = "", content: str = "") -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
     _invalidate_index_cache(path)
-    return f"Successfully wrote {len(content)} bytes to {path}"
+    msg = f"Successfully wrote {len(content)} bytes to {path}"
+    # Post-write diagnostics: catch syntax errors immediately so the model
+    # gets feedback on a broken write in the same turn.
+    try:
+        from app.lint import diagnostic_block
+        diag = diagnostic_block(path)
+        if diag:
+            msg += f"\n\nLSP errors detected in this file, please fix:\n{diag}"
+    except Exception:
+        pass
+    return msg
 
 
 TOOLS.append({
@@ -200,7 +210,17 @@ async def edit_file(
                   "context-aware", "multi-occurrence"][result.replacer_index or 0]
     lines_changed = max(norm_new.count("\n"), norm_old.count("\n")) + 1
     suffix = "" if level_name == "exact" else f" [fuzzy: {level_name}]"
-    return f"Replaced text in {file_path} (~{lines_changed} lines){suffix}"
+    msg = f"Replaced text in {file_path} (~{lines_changed} lines){suffix}"
+    # Post-edit diagnostics: surface syntax errors so the model can fix them
+    # in the next loop iteration (closes the edit→error→re-edit loop).
+    try:
+        from app.lint import diagnostic_block
+        diag = diagnostic_block(file_path)
+        if diag:
+            msg += f"\n\nLSP errors detected in this file, please fix:\n{diag}"
+    except Exception:
+        pass  # diagnostics are advisory, never block the edit
+    return msg
 
 
 TOOLS.append({
