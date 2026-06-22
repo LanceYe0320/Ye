@@ -172,6 +172,10 @@ class SessionState:
     todo_list: object = None  # lazily set to a TodoList instance
     # Interaction mode: "normal" (ask for edits), "plan" (read-only), "auto_accept" (auto-approve all)
     mode: str = "normal"  # "normal" | "plan" | "auto_accept"
+    # Anchored summary from the last compaction round (None until first compact).
+    # Injected into subsequent compaction prompts so the model updates the
+    # existing summary incrementally rather than rebuilding from scratch.
+    last_summary: str | None = None
 
 
 _MODES = ("normal", "plan", "auto_accept")
@@ -768,24 +772,55 @@ async def _cmd_init(state: SessionState) -> None:
 
 
 async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
-    """Compact conversation — preserve recent context, summarize older content.
+    """Compact conversation — structured summary + tail turn preservation.
 
-    Strategy (less aggressive than before):
-    - Keep recent turns verbatim (last 8 messages)
-    - Prune old tool output more gently (200 chars instead of 100)
-    - Build a progressive summary of older content
+    Strategy (ported from opencode compaction.ts):
+    - Split messages into "head" (to summarize) and "tail" (to keep verbatim).
+      The tail boundary is computed by *turns* (a new turn starts at each user
+      message), not by raw message count — so we never cut an assistant+tool
+      pair in half.
+    - Summarize the head using the structured Markdown template
+      (Goal / Constraints / Progress / Key Decisions / Next Steps / ...).
+    - On the 2nd+ compaction, inject the previous summary and ask for an
+      *update* — keeps the summary stable and only costs the diff.
+    - Old tool output is pruned more aggressively than assistant text, since
+      tool results are the biggest context hogs and rarely need full fidelity
+      once summarized.
     """
     if len(state.messages) <= 5:
         console.print("[dim]Conversation is short enough, no compaction needed.[/]")
         return
 
-    # Split: old messages to summarize + recent messages to keep verbatim
-    RECENT_TURNS_TO_KEEP = 8  # Keep last 8 messages (user+assistant+tool pairs)
-    split_point = max(1, len(state.messages) - RECENT_TURNS_TO_KEEP)
-    old_messages = state.messages[1:split_point]  # Skip system prompt
+    # --- Compute tail boundary by turns ---
+    # A "turn" = a user message + everything until the next user message.
+    # Keep the last TAIL_TURNS turns verbatim.
+    TAIL_TURNS = 1
+    user_indices = [
+        i for i, m in enumerate(state.messages)
+        if m.role == "user" and i > 0  # skip the system prompt slot
+    ]
+    if len(user_indices) <= TAIL_TURNS:
+        # Not enough turns to split — fall back to keeping the last few messages
+        split_point = max(1, len(state.messages) - 4)
+    else:
+        split_point = user_indices[-TAIL_TURNS]
+
+    # Skip the system prompt (index 0) when summarizing the head.
+    head_start = 1
+    old_messages = state.messages[head_start:split_point]
     recent_messages = state.messages[split_point:]
 
-    # Serialize old messages with tool output pruning
+    if not old_messages:
+        console.print("[dim]Nothing to compact — recent context is already minimal.[/]")
+        return
+
+    # --- Serialize head with tiered tool-output pruning ---
+    # Tool results are the #1 context hog. We keep a small head+tail of each
+    # so the model retains "what was tried" without the full dump.
+    TOOL_KEEP_HEAD = 300
+    TOOL_KEEP_TAIL = 150
+    ASSISTANT_KEEP = 1000
+
     parts: list[str] = []
     for msg in old_messages:
         role = msg.role.upper()
@@ -793,11 +828,15 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
         tool_names = ""
         if msg.tool_calls:
             tool_names = f" [tools: {', '.join(tc.name for tc in msg.tool_calls)}]"
-        # Prune tool output: keep first 200 chars (not 100)
         if role == "TOOL":
-            text = text[:200] + ("..." if len(text) > 200 else "")
-        elif len(text) > 800:
-            text = text[:800] + "..."
+            if len(text) > TOOL_KEEP_HEAD + TOOL_KEEP_TAIL:
+                text = (
+                    text[:TOOL_KEEP_HEAD]
+                    + f"\n... [pruned {len(text) - TOOL_KEEP_HEAD - TOOL_KEEP_TAIL} chars] ...\n"
+                    + text[-TOOL_KEEP_TAIL:]
+                )
+        elif role == "ASSISTANT" and len(text) > ASSISTANT_KEEP:
+            text = text[:ASSISTANT_KEEP] + "..."
         parts.append(f"[{role}]{tool_names}: {text}")
 
     conversation_text = "\n".join(parts)
@@ -806,6 +845,7 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
 
     from app.prompts import CompactPrompt
 
+    # --- Build the compaction prompt (incremental if we have a prior summary) ---
     summarize_messages = [
         _get_chat_message()(
             role="system",
@@ -813,11 +853,15 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
         ),
         _get_chat_message()(
             role="user",
-            content=f"Summarize this conversation:\n\n{conversation_text}",
+            content=CompactPrompt.user_message(
+                conversation_text,
+                previous_summary=state.last_summary,
+            ),
         ),
     ]
 
-    console.print("[dim]Compacting conversation...[/]\n")
+    mode_label = "Updating summary" if state.last_summary else "Compacting conversation"
+    console.print(f"[dim]{mode_label}...[/]\n")
     summary_parts: list[str] = []
     prompt_tokens = 0
     completion_tokens = 0
@@ -826,7 +870,7 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
     try:
         async for chunk in provider.chat(
             messages=summarize_messages,
-            max_tokens=800,
+            max_tokens=1200,
             temperature=0.3,
             model=state.model,
         ):
@@ -847,10 +891,18 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
     summary = "".join(summary_parts)
     console.print()  # newline after streamed summary
 
+    # --- Rebuild messages: system + anchored summary + preserved tail ---
     old_count = len(state.messages)
+    state.last_summary = summary
     state.messages = [
         _system_prompt(state.cwd, state=state),
-        _get_chat_message()(role="user", content=f"[Conversation summary]\n{summary}"),
+        _get_chat_message()(
+            role="user",
+            content=(
+                "[Anchored conversation summary — earlier turns were compacted. "
+                "Use this as durable context for the remaining work.]\n\n" + summary
+            ),
+        ),
         *recent_messages,
     ]
     state.usage_records.append(UsageRecord(
@@ -862,7 +914,7 @@ async def _cmd_compact(state: SessionState, provider: ZhipuProvider) -> None:
     new_count = len(state.messages)
     console.print(
         f"[green]Compacted {old_count} -> {new_count} messages[/] "
-        f"({len(summary)} chars summary)"
+        f"({len(summary)} chars summary, {len(recent_messages)} tail kept)"
     )
 
 

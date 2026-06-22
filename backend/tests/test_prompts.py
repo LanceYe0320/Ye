@@ -43,9 +43,29 @@ class TestSystemPromptBuild:
 class TestCompactPrompt:
     def test_system_message(self):
         msg = CompactPrompt.system_message()
-        assert "summar" in msg.lower()
-        assert "task" in msg.lower() or "file" in msg.lower()
+        # Structured summary template must be present.
+        assert "summar" in msg.lower() or "goal" in msg.lower()
+        # All required sections of the anchored summary template.
+        for section in ("## Goal", "## Progress", "## Key Decisions",
+                        "## Next Steps", "## Relevant Files", "## Constraints"):
+            assert section in msg, f"missing section {section!r}"
 
     def test_user_message_wraps_text(self):
         msg = CompactPrompt.user_message("some conversation text")
         assert "some conversation text" in msg
+
+    def test_user_message_incremental_injects_previous_summary(self):
+        """Second+ compaction asks for an UPDATE, not a rebuild."""
+        msg = CompactPrompt.user_message(
+            "new turn",
+            previous_summary="## Goal\n- old goal",
+        )
+        assert "<previous-summary>" in msg
+        assert "old goal" in msg
+        assert "update" in msg.lower()
+
+    def test_user_message_first_time_no_anchor(self):
+        """First compaction has no previous summary → asks to create new."""
+        msg = CompactPrompt.user_message("first turn")
+        assert "<previous-summary>" not in msg
+        assert "create a new" in msg.lower()

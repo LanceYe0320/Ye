@@ -107,17 +107,61 @@ class SystemPrompt:
 
 
 class CompactPrompt:
-    """Prompts for conversation context compression."""
+    """Prompts for conversation context compression.
+
+    Uses the structured Markdown summary template (ported from opencode's
+    compaction.ts). The fixed section structure makes summaries:
+      - stable across compaction rounds (the model fills known slots rather
+        than free-form rewriting),
+      - cheap to incrementally update (inject the previous summary and ask
+        for an update),
+      - useful as an anchored context the model can rely on after compaction.
+    """
+
+    SUMMARY_TEMPLATE = (
+        "Output exactly the Markdown structure shown inside <template> and keep "
+        "the section order unchanged. Do not include the <template> tags in your "
+        "response.\n"
+        "<template>\n"
+        "## Goal\n"
+        "- [single-sentence task summary]\n"
+        "\n"
+        "## Constraints & Preferences\n"
+        "- [user constraints, preferences, specs, or \"(none)\"]\n"
+        "\n"
+        "## Progress\n"
+        "### Done\n"
+        "- [completed work or \"(none)\"]\n"
+        "\n"
+        "### In Progress\n"
+        "- [current work or \"(none)\"]\n"
+        "\n"
+        "### Blocked\n"
+        "- [blockers or \"(none)\"]\n"
+        "\n"
+        "## Key Decisions\n"
+        "- [decision and why, or \"(none)\"]\n"
+        "\n"
+        "## Next Steps\n"
+        "- [ordered next actions or \"(none)\"]\n"
+        "\n"
+        "## Critical Context\n"
+        "- [important technical facts, errors, open questions, or \"(none)\"]\n"
+        "\n"
+        "## Relevant Files\n"
+        "- [file or directory path: why it matters, or \"(none)\"]\n"
+        "</template>\n"
+        "\n"
+        "Rules:\n"
+        "- Keep every section, even when empty.\n"
+        "- Use terse bullets, not prose paragraphs.\n"
+        "- Preserve exact file paths, commands, error strings, and identifiers when known.\n"
+        "- Do not mention the summary process or that context was compacted."
+    )
 
     SYSTEM = (
         "You are a conversation summarizer for an AI coding assistant. "
-        "Create a structured summary preserving:\n"
-        "1. Current task: what the user is working on right now\n"
-        "2. Files modified: which files were read, edited, or created\n"
-        "3. Key decisions: important choices made and why\n"
-        "4. Errors encountered: bugs found, fixes applied\n"
-        "5. Pending work: what still needs to be done\n"
-        "Use bullet points. Write in the same language as the conversation."
+        + SUMMARY_TEMPLATE
     )
 
     @staticmethod
@@ -126,9 +170,25 @@ class CompactPrompt:
         return CompactPrompt.SYSTEM
 
     @staticmethod
-    def user_message(conversation_text: str) -> str:
-        """Return the user message containing the conversation to summarize."""
-        return f"Summarize this conversation:\n\n{conversation_text}"
+    def user_message(conversation_text: str, previous_summary: str | None = None) -> str:
+        """Build the user prompt for summarization.
+
+        If ``previous_summary`` is given, ask the model to *update* the
+        anchored summary (incremental compaction) rather than rebuild it
+        from scratch. This keeps the summary stable across rounds and only
+        costs the diff in tokens.
+        """
+        if previous_summary:
+            anchor = (
+                "Update the anchored summary below using the conversation history above.\n"
+                "Preserve still-true details, remove stale details, and merge in the new facts.\n"
+                "<previous-summary>\n"
+                f"{previous_summary}\n"
+                "</previous-summary>"
+            )
+        else:
+            anchor = "Create a new anchored summary from the conversation history above."
+        return f"{anchor}\n\n{CompactPrompt.SUMMARY_TEMPLATE}\n\nConversation to summarize:\n\n{conversation_text}"
 
 
 class ErrorPrompts:
